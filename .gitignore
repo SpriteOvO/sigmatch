@@ -14,4 +14,4 @@ out/
 CMakeSettings.json
 
 # Builds
-build/
+builds/
