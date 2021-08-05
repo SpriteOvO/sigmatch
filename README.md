@@ -5,6 +5,9 @@
 </h1>
 <p align="center">Modern C++ 20 Signature Match / Search Library</p>
 <p align="center">
+    <a href="https://github.com/SpriteOvO/sigmatch/actions/workflows/windows.yml">
+        <img src="https://github.com/SpriteOvO/sigmatch/actions/workflows/windows.yml/badge.svg"/>
+    </a>
     <a href="https://github.com/SpriteOvO/sigmatch/compare">
         <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg"/>
     </a>
