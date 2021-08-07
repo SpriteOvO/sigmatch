@@ -2113,10 +2113,10 @@ public:
         for (auto &info : infos) {
             if (info.thread.joinable()) {
                 info.thread.join();
-                matches_count += info.result.matches().size();
-                error_count += info.result.error_messages().size();
-                warning_count += info.result.warning_messages().size();
             }
+            matches_count += info.result.matches().size();
+            error_count += info.result.error_messages().size();
+            warning_count += info.result.warning_messages().size();
         }
 
         // merge
