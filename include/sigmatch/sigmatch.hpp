@@ -76,6 +76,7 @@
 #include <span>
 #include <tuple>
 #include <mutex>
+#include <array>
 #include <vector>
 #include <string>
 #include <format>
@@ -950,7 +951,10 @@ namespace impl {
 //
 class msvc_c7599_false_positive_workaround : public std::span<const std::byte>
 {
+public:
     using std::span<const std::byte>::span;
+    
+    msvc_c7599_false_positive_workaround(const std::span<const std::byte>& span) : std::span<const std::byte>(span) {}
 };
 
 } // namespace impl
