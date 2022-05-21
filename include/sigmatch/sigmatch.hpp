@@ -938,31 +938,6 @@ private:
     }
 };
 
-///
-/// @cond
-///
-
-namespace impl {
-
-//
-// Inheriting from `std::span` directly will cause MSVC (ver <= v19.29) false positive C7599 error
-//
-// TODO: Remove this class when MSVC releases fixes.
-//
-class msvc_c7599_false_positive_workaround : public std::span<const std::byte>
-{
-public:
-    using std::span<const std::byte>::span;
-    
-    msvc_c7599_false_positive_workaround(const std::span<const std::byte>& span) : std::span<const std::byte>(span) {}
-};
-
-} // namespace impl
-
-///
-/// @endcond
-///
-
 //////////////////////////////////////////////////
 ///
 /// @brief An extended const byte span class
@@ -970,10 +945,20 @@ public:
 /// In contrast to `std::span<const std::byte>`, it can accept pure pointers and `std::span<const
 /// unsigned char>`.
 ///
-class const_byte_span : public impl::msvc_c7599_false_positive_workaround
+class const_byte_span : public std::span<const std::byte>
 {
 public:
-    using impl::msvc_c7599_false_positive_workaround::msvc_c7599_false_positive_workaround;
+    using std::span<const std::byte>::span;
+
+    ///
+    /// @brief Constructor for `std::span<const std::byte>`
+    ///
+    /// @param[in] range A `std::span<const std::byte>` value.
+    ///
+    constexpr const_byte_span(const std::span<const std::byte> &range) noexcept
+        : std::span<const std::byte>{range}
+    {
+    }
 
     ///
     /// @brief Constructor for pure pointer
@@ -982,7 +967,7 @@ public:
     /// @param[in] size  The size of this memory range.
     ///
     constexpr const_byte_span(const void *begin, size_t size) noexcept
-        : impl::msvc_c7599_false_positive_workaround{static_cast<const std::byte *>(begin), size}
+        : std::span<const std::byte>{static_cast<const std::byte *>(begin), size}
     {
     }
 
