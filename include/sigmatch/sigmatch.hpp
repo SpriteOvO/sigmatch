@@ -185,6 +185,25 @@
     ///
     #define SIGMATCH_STORE_EACH_READING_FAILURE_WARNING_MESSAGE
 
+    ///
+    /// @brief A configuration macro to control whether to enable experimental Ghidra signature
+    /// format
+    ///
+    /// If defined, Ghidra signature format (e.g. `"[01001...]"`, `"[..100100]"`, `"[00...101]"`,
+    /// `"[........]"`) will be supported.
+    ///
+    /// The binary sequence of one byte is enclosed in square brackets, and `.` will be treated as a
+    /// wildcard.
+    ///
+    /// @remark
+    /// Some examples of legitimate literal signature strings after Ghidra signature format enabled:
+    /// @code{.cpp}
+    ///     "[01001...] 89 5c [..100100] 08 [01001...]"_sig
+    ///     "23 [...1..0.] 64 *A [........]"_sig
+    ///     "64 6? 6* 6. [**..??10] [*.?*.?*.]"_sig
+    /// @endcode
+    ///
+    #define SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
 #endif
 
 ///
@@ -438,19 +457,6 @@ private:
 //////////////////////////////////////////////////
 // enums
 //
-
-///
-/// @brief Byte match mode enumeration
-///
-/// @sa sig_byte::match_mode()
-///
-enum class byte_match_mode : uint32_t
-{
-    full,
-    left_only,
-    right_only,
-    wildcard,
-};
 
 ///
 /// @brief Memory protection flags enumeration
@@ -1013,14 +1019,27 @@ class sig_byte
 {
 public:
     ///
+    /// @brief Constructor for value and mask
+    ///
+    /// @param[in] value Value to be matched.
+    /// @param[in] mask Mask of the value to be matched.
+    ///
+    constexpr sig_byte(std::byte value, std::byte mask) noexcept : _value{value}, _mask{mask} {}
+
+    ///
+    /// @copydoc sig_byte(std::byte, std::byte)
+    ///
+    constexpr sig_byte(unsigned char value, unsigned char mask) noexcept
+        : sig_byte{std::byte{value}, std::byte{mask}}
+    {
+    }
+
+    ///
     /// @brief Constructor for full match
     ///
     /// @param[in] value A byte value.
     ///
-    constexpr sig_byte(std::byte value) noexcept
-    {
-        _value = {true, value};
-    }
+    constexpr sig_byte(std::byte value) noexcept : _value{value}, _mask{std::byte{0xFF}} {}
 
     ///
     /// @copydoc sig_byte(std::byte)
@@ -1036,9 +1055,9 @@ public:
     /// @sa _
     ///
     constexpr sig_byte(std::byte left, wildcard wc) noexcept
+        : _value{left << 4}, _mask{std::byte{0xF0}}
     {
         SIGMATCH_UNUSED(wc);
-        _left = {true, left << 4};
     }
 
     ///
@@ -1055,9 +1074,9 @@ public:
     /// @sa _
     ///
     constexpr sig_byte(wildcard wc, std::byte right) noexcept
+        : _value{right}, _mask{std::byte{0x0F}}
     {
         SIGMATCH_UNUSED(wc);
-        _right = {true, right};
     }
 
     ///
@@ -1149,24 +1168,23 @@ public:
     }
 
     ///
-    /// @brief Get the match mode of this `sig_byte`
+    /// @brief Value to be matched, wildcard bits are filled with 0
     ///
-    /// @return byte_match_mode The match mode of this `sig_byte`.
+    /// @return std::byte The value to be matched of this `sig_byte`.
     ///
-    [[nodiscard]] constexpr byte_match_mode match_mode() const noexcept
+    [[nodiscard]] constexpr std::byte value() const noexcept
     {
-        if (_value.first) {
-            return byte_match_mode::full;
-        }
-        else if (_left.first) {
-            return byte_match_mode::left_only;
-        }
-        else if (_right.first) {
-            return byte_match_mode::right_only;
-        }
-        else {
-            return byte_match_mode::wildcard;
-        }
+        return _value;
+    }
+
+    ///
+    /// @brief Mask of the value to be matched
+    ///
+    /// @return std::byte The mask of the value to be matched of this `sig_byte`.
+    ///
+    [[nodiscard]] constexpr std::byte mask() const noexcept
+    {
+        return _mask;
     }
 
     ///
@@ -1178,18 +1196,7 @@ public:
     ///
     [[nodiscard]] constexpr bool match(std::byte value) const noexcept
     {
-        switch (match_mode()) {
-        case byte_match_mode::full:
-            return _value.second == value;
-        case byte_match_mode::left_only:
-            return _left.second == (value & std::byte{0xF0});
-        case byte_match_mode::right_only:
-            return _right.second == (value & std::byte{0x0F});
-        case byte_match_mode::wildcard:
-            return true;
-        default:
-            return false;
-        }
+        return ((value & _mask) ^ _value) == std::byte{0};
     }
 
     ///
@@ -1201,10 +1208,7 @@ public:
     }
 
 private:
-    // We can't use std::optional here because it can't be used for constant evaluation currently.
-    //
-    std::pair<bool, std::byte> _value{false, std::byte{0}}, _left{false, std::byte{0}},
-        _right{false, std::byte{0}};
+    std::byte _value{0}, _mask{0};
 
     // For friendly calling
     //
@@ -1213,15 +1217,13 @@ private:
     constexpr void copy_from(const sig_byte &rhs) noexcept
     {
         _value = rhs._value;
-        _left = rhs._left;
-        _right = rhs._right;
+        _mask = rhs._mask;
     }
 
     constexpr void move_from(sig_byte &&rhs) noexcept
     {
         _value = std::move(rhs._value);
-        _left = std::move(rhs._left);
-        _right = std::move(rhs._right);
+        _mask = std::move(rhs._mask);
     }
 
     template <class T, size_t kCount>
@@ -1449,7 +1451,7 @@ private:
 
 namespace impl {
 
-[[nodiscard]] consteval std::byte byte_str_to_hex(const std::string &str)
+[[nodiscard]] consteval std::byte parse_byte_hex_str(const std::string &str)
 {
     unsigned char result = 0;
 
@@ -1504,7 +1506,11 @@ string_split(std::string source, const std::string &delimiter, bool exclude_empt
 
 [[nodiscard]] consteval bool is_char_wildcard(char ch) noexcept
 {
-    return ch == '?' || ch == '*';
+    return ch == '?' || ch == '*'
+#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+           || ch == '.'
+#endif
+        ;
 }
 
 template <details::consteval_str_buffer kSigStrBuf>
@@ -1519,53 +1525,90 @@ template <details::consteval_str_buffer kSigStrBuf>
     return result;
 }
 
+[[nodiscard]] consteval sig_byte parse_sig_normal(const std::string &byte_str)
+{
+    SIGMATCH_CONSTEVAL_STATIC_ASSERT(
+        byte_str.size() == 2,
+        "Normal signature byte should be represented by 2 hexadecimal digits.");
+
+    const bool is_left_wildcard = is_char_wildcard(byte_str.front()),
+               is_right_wildcard = is_char_wildcard(byte_str.back());
+
+    if (!is_left_wildcard && !is_right_wildcard) {
+        // full match
+        return parse_byte_hex_str(byte_str);
+    }
+    else if (is_left_wildcard && is_right_wildcard) {
+        // full wildcard
+        return _;
+    }
+    else if (is_left_wildcard && !is_right_wildcard) {
+        // semi-wildcard (left)
+        return {_, parse_byte_hex_str(std::string{byte_str.back()})};
+    }
+    else if (!is_left_wildcard && is_right_wildcard) {
+        // semi-wildcard (right)
+        return {parse_byte_hex_str(std::string{byte_str.front()}), _};
+    }
+    else {
+        SIGMATCH_CONSTEVAL_STATIC_ASSERT(
+            false, "Please report this bug on the GitHub Issue Tracker.");
+    }
+}
+
+#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+// refer to: https://github.com/NationalSecurityAgency/ghidra/issues/5490#issuecomment-1622277250
+[[nodiscard]] consteval sig_byte parse_sig_ghidra(const std::string &byte_str)
+{
+    SIGMATCH_CONSTEVAL_STATIC_ASSERT(
+        byte_str.size() == 10 && byte_str.front() == '[' && byte_str.back() == ']',
+        "Ghidra signature byte should be represented by 8 binary digits.");
+
+    unsigned char target = 0, mask = 0;
+
+    for (size_t i = 0; i < 8; i++) {
+        char ch = byte_str.at(i + 1);
+
+        if (ch == '0') {
+            mask |= (0b10000000 >> i);
+        }
+        else if (ch == '1') {
+            mask |= (0b10000000 >> i);
+            target |= (0b10000000 >> i);
+        }
+        else {
+            SIGMATCH_CONSTEVAL_STATIC_ASSERT(
+                is_char_wildcard(ch), "Unknown character in Ghidra like signature");
+        }
+    }
+
+    return sig_byte{std::byte{target}, std::byte{mask}};
+}
+#endif
+
+[[nodiscard]] consteval sig_byte parse_sig_byte(const std::string &byte_str)
+{
+#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+    if (byte_str.front() == '[' && byte_str.back() == ']') {
+        return parse_sig_ghidra(byte_str);
+    }
+#endif
+    return parse_sig_normal(byte_str);
+}
+
 template <details::consteval_str_buffer kSigStrBuf>
 [[nodiscard]] consteval decltype(auto) parse_sig_str()
 {
     constexpr size_t non_space_char_count = count_non_space_char<kSigStrBuf>();
-    static_assert(
-        non_space_char_count % 2 == 0,
-        "The signature format is wrong. Each byte must be represented by 2 hexadecimal digits.");
-    constexpr size_t bytes_count = non_space_char_count / 2;
+    static_assert(non_space_char_count % 2 == 0, "The signature format is wrong.");
+
+    constexpr size_t bytes_count = string_split(kSigStrBuf.data, " ").size();
+    auto bytes_vec = string_split(kSigStrBuf.data, " ");
 
     auto result = details::friendly_construct_array<sig_byte, bytes_count>();
 
-    auto bytes_vec = string_split(kSigStrBuf.data, " ");
-
-    SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-        bytes_count == bytes_vec.size(),
-        "The signature format is wrong. Each byte must be represented by 2 hexadecimal digits.");
-
     for (size_t i = 0; i < bytes_count; ++i) {
-        const auto &byte_str = bytes_vec[i];
-
-        SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-            byte_str.size() == 2,
-            "The signature format is wrong. Each byte must be represented by 2 hexadecimal digits.");
-
-        const bool is_left_wildcard = is_char_wildcard(byte_str.front()),
-                   is_right_wildcard = is_char_wildcard(byte_str.back());
-
-        if (!is_left_wildcard && !is_right_wildcard) {
-            // full match
-            result[i] = byte_str_to_hex(byte_str);
-        }
-        else if (is_left_wildcard && is_right_wildcard) {
-            // full wildcard
-            result[i] = _;
-        }
-        else if (is_left_wildcard && !is_right_wildcard) {
-            // semi-wildcard (left)
-            result[i] = {_, byte_str_to_hex(std::string{byte_str.back()})};
-        }
-        else if (!is_left_wildcard && is_right_wildcard) {
-            // semi-wildcard (right)
-            result[i] = {byte_str_to_hex(std::string{byte_str.front()}), _};
-        }
-        else {
-            SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-                false, "Please report this bug on the GitHub Issue Tracker.");
-        }
+        result[i] = parse_sig_byte(bytes_vec[i]);
     }
 
     return result;
@@ -2777,6 +2820,8 @@ namespace sigmatch_literals {
 ///     "   1A B2 3C D4   "_sig
 ///     "1A    B2   3C D4 "_sig
 /// @endcode
+///
+/// @sa SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
 ///
 template <sigmatch::details::consteval_str_buffer kSigStrBuf>
 [[nodiscard]] constexpr decltype(auto) operator""_sig()
