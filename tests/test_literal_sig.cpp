@@ -32,45 +32,53 @@ TEST_CASE("Literal signature bytes", "[signature]")
     REQUIRE(sig.size() == 8);
     REQUIRE(sig_bytes.size() == 8);
 
-    REQUIRE(sig_bytes[0].match_mode() == byte_match_mode::full);
+    REQUIRE(sig_bytes[0].value() == std::byte{0x1A});
+    REQUIRE(sig_bytes[0].mask() == std::byte{0xFF});
     REQUIRE(sig_bytes[0].match(std::byte{0x1A}));
     REQUIRE(!sig_bytes[0].match(std::byte{0x2A}));
     REQUIRE(!sig_bytes[0].match(std::byte{0x1B}));
 
-    REQUIRE(sig_bytes[1].match_mode() == byte_match_mode::full);
+    REQUIRE(sig_bytes[1].value() == std::byte{0xBB});
+    REQUIRE(sig_bytes[1].mask() == std::byte{0xFF});
     REQUIRE(sig_bytes[1].match(std::byte{0xBB}));
     REQUIRE(!sig_bytes[1].match(std::byte{0xC2}));
     REQUIRE(!sig_bytes[1].match(std::byte{0xB3}));
 
-    REQUIRE(sig_bytes[2].match_mode() == byte_match_mode::right_only);
+    REQUIRE(sig_bytes[2].value() == std::byte{0x0C});
+    REQUIRE(sig_bytes[2].mask() == std::byte{0x0F});
     REQUIRE(sig_bytes[2].match(std::byte{0x1C}));
     REQUIRE(sig_bytes[2].match(std::byte{0xAC}));
     REQUIRE(!sig_bytes[2].match(std::byte{0x1B}));
     REQUIRE(!sig_bytes[2].match(std::byte{0xC2}));
 
-    REQUIRE(sig_bytes[3].match_mode() == byte_match_mode::left_only);
+    REQUIRE(sig_bytes[3].value() == std::byte{0x40});
+    REQUIRE(sig_bytes[3].mask() == std::byte{0xF0});
     REQUIRE(sig_bytes[3].match(std::byte{0x42}));
     REQUIRE(sig_bytes[3].match(std::byte{0x4B}));
     REQUIRE(!sig_bytes[3].match(std::byte{0x27}));
     REQUIRE(!sig_bytes[3].match(std::byte{0xD9}));
 
-    REQUIRE(sig_bytes[4].match_mode() == byte_match_mode::right_only);
+    REQUIRE(sig_bytes[4].value() == std::byte{0x0D});
+    REQUIRE(sig_bytes[4].mask() == std::byte{0x0F});
     REQUIRE(sig_bytes[4].match(std::byte{0x1D}));
     REQUIRE(sig_bytes[4].match(std::byte{0xAD}));
     REQUIRE(!sig_bytes[4].match(std::byte{0x1B}));
     REQUIRE(!sig_bytes[4].match(std::byte{0xC2}));
 
-    REQUIRE(sig_bytes[5].match_mode() == byte_match_mode::wildcard);
+    REQUIRE(sig_bytes[5].value() == std::byte{0x00});
+    REQUIRE(sig_bytes[5].mask() == std::byte{0x00});
     REQUIRE(sig_bytes[5].match(std::byte{0x5D}));
     REQUIRE(sig_bytes[5].match(std::byte{0xA9}));
     REQUIRE(sig_bytes[5].match(std::byte{0x78}));
 
-    REQUIRE(sig_bytes[6].match_mode() == byte_match_mode::wildcard);
+    REQUIRE(sig_bytes[6].value() == std::byte{0x00});
+    REQUIRE(sig_bytes[6].mask() == std::byte{0x00});
     REQUIRE(sig_bytes[6].match(std::byte{0x3F}));
     REQUIRE(sig_bytes[6].match(std::byte{0x86}));
     REQUIRE(sig_bytes[6].match(std::byte{0xCC}));
 
-    REQUIRE(sig_bytes[7].match_mode() == byte_match_mode::full);
+    REQUIRE(sig_bytes[7].value() == std::byte{0x99});
+    REQUIRE(sig_bytes[7].mask() == std::byte{0xFF});
     REQUIRE(sig_bytes[7].match(std::byte{0x99}));
     REQUIRE(!sig_bytes[7].match(std::byte{0x24}));
     REQUIRE(!sig_bytes[7].match(std::byte{0x89}));

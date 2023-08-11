@@ -14,14 +14,16 @@
 // limitations under the License.
 //
 
+#define SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+
 #include "includes.hpp"
 
 using namespace sigmatch;
 using namespace sigmatch_literals;
 
-TEST_CASE("Literal signature WF", "[signature]")
+TEST_CASE("Literal signature WF ghidra invalid binary", "[signature]")
 {
-    // 'G' is not a valid hexadecimal digit, we expect this to cause a compile error
-    //                       v
-    auto sig_bytes = "1A B2 3G D4"_sig;
+    // non-binary
+    //                         v
+    auto sig_bytes = "1A B2 [..2.....] D4"_sig;
 }
