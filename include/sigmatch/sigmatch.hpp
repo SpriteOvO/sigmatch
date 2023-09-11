@@ -100,10 +100,16 @@
     #define SIGMATCH_PLATFORM_WINDOWS
 #endif
 
-#define SIGMATCH_CONSTEVAL_STATIC_ASSERT(c, msg)                                                   \
+// CT stands for compile-time, RT stands for runtime
+#define SIGMATCH_CT_RT_ASSERT(c, msg)                                                              \
     do {                                                                                           \
         if (!(c)) {                                                                                \
-            throw msg;                                                                             \
+            if (std::is_constant_evaluated()) {                                                    \
+                throw msg;                                                                         \
+            }                                                                                      \
+            else {                                                                                 \
+                return std::nullopt;                                                               \
+            }                                                                                      \
         }                                                                                          \
     } while (false)
 
@@ -204,6 +210,19 @@
     /// @endcode
     ///
     #define SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+
+    ///
+    /// @brief A configuration macro to control whether to enable signature runtime parsing
+    ///
+    /// Note that with this macro enabled, users will be able to parse runtime signature strings
+    /// using sigmatch::signature::parse(std::string_view sig). However, these strings will be
+    /// retained in the compiled binary, and they will take extra time to parse at runtime compared
+    /// to compile-time parsing. Signatures created using `sigmatch_literals::operator ""_sig()`
+    /// will still be parsed at compile-time.
+    ///
+    /// @sa sigmatch::signature::parse(std::string_view sig) sigmatch_literals::operator ""_sig()
+    ///
+    #define SIGMATCH_ENABLE_SIGNATURE_RUNTIME_PARSING
 #endif
 
 ///
@@ -562,6 +581,11 @@ struct consteval_str_buffer
         for (size_t i = 0; i < kCount; ++i) {
             data[i] = str[i];
         }
+    }
+
+    consteval std::string_view to_string_view() const noexcept
+    {
+        return std::string_view{data};
     }
 
     char_type data[kCount];
@@ -1231,6 +1255,211 @@ private:
     details::friendly_construct_array() noexcept(noexcept(T{}));
 };
 
+///
+/// @cond
+///
+
+namespace impl {
+
+[[nodiscard]] constexpr std::optional<std::byte> parse_byte_hex_str(std::string_view str)
+{
+    unsigned char result = 0;
+
+    for (const char ch : str) {
+        // check byte value overflow
+        SIGMATCH_CT_RT_ASSERT(result < 0x10, "Please report this bug on the GitHub Issue Tracker.");
+
+        unsigned char ch_value;
+
+        if (ch >= '0' && ch <= '9') {
+            ch_value = ch - '0';
+        }
+        else if (ch >= 'A' && ch <= 'F') {
+            ch_value = ch - 'A' + 10;
+        }
+        else if (ch >= 'a' && ch <= 'f') {
+            ch_value = ch - 'a' + 10;
+        }
+        else {
+            SIGMATCH_CT_RT_ASSERT(
+                false, "The signature format is wrong. Contains unexpected characters.");
+        }
+
+        SIGMATCH_CT_RT_ASSERT(
+            ch_value < 0x10, "Please report this bug on the GitHub Issue Tracker.");
+
+        result *= 0x10;
+        result += ch_value;
+    }
+
+    return std::byte{result};
+}
+
+[[nodiscard]] constexpr decltype(auto)
+string_split(std::string_view source, std::string_view delimiter, bool exclude_empty = true)
+{
+    std::vector<std::string_view> result;
+
+    size_t begin_pos = 0, end_pos;
+    do {
+        end_pos = source.find(delimiter, begin_pos);
+        auto token = source.substr(begin_pos, end_pos - begin_pos);
+        if (!exclude_empty || exclude_empty && !token.empty()) {
+            result.emplace_back(std::move(token));
+        }
+        begin_pos = end_pos + delimiter.size();
+    } while (end_pos != std::string_view::npos);
+
+    return result;
+}
+
+[[nodiscard]] constexpr bool is_char_wildcard(char ch) noexcept
+{
+    return ch == '?' || ch == '*'
+#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+           || ch == '.'
+#endif
+        ;
+}
+
+[[nodiscard]] constexpr size_t count_non_space_char(std::string_view sig) noexcept
+{
+    size_t result = 0;
+    for (size_t i = 0; i < sig.size(); ++i) {
+        if (sig.at(i) != ' ') {
+            ++result;
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] constexpr std::optional<sig_byte> parse_sig_normal(std::string_view byte_str)
+{
+    SIGMATCH_CT_RT_ASSERT(
+        byte_str.size() == 2,
+        "Normal signature byte should be represented by 2 hexadecimal digits.");
+
+    const bool is_left_wildcard = is_char_wildcard(byte_str.front()),
+               is_right_wildcard = is_char_wildcard(byte_str.back());
+
+    if (!is_left_wildcard && !is_right_wildcard) {
+        // full match
+        return parse_byte_hex_str(byte_str);
+    }
+    else if (is_left_wildcard && is_right_wildcard) {
+        // full wildcard
+        return _;
+    }
+    else if (is_left_wildcard && !is_right_wildcard) {
+        // semi-wildcard (left)
+        auto b = parse_byte_hex_str(std::string{byte_str.back()});
+        if (!b.has_value()) {
+            return std::nullopt;
+        }
+        return sig_byte{_, b.value()};
+    }
+    else if (!is_left_wildcard && is_right_wildcard) {
+        // semi-wildcard (right)
+        auto b = parse_byte_hex_str(std::string{byte_str.front()});
+        if (!b.has_value()) {
+            return std::nullopt;
+        }
+        return sig_byte{b.value(), _};
+    }
+    else {
+        SIGMATCH_CT_RT_ASSERT(false, "Please report this bug on the GitHub Issue Tracker.");
+    }
+}
+
+#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+// refer to: https://github.com/NationalSecurityAgency/ghidra/issues/5490#issuecomment-1622277250
+[[nodiscard]] constexpr std::optional<sig_byte> parse_sig_ghidra(std::string_view byte_str)
+{
+    SIGMATCH_CT_RT_ASSERT(
+        byte_str.size() == 10 && byte_str.front() == '[' && byte_str.back() == ']',
+        "Ghidra signature byte should be represented by 8 binary digits.");
+
+    unsigned char target = 0, mask = 0;
+
+    for (size_t i = 0; i < 8; i++) {
+        char ch = byte_str.at(i + 1);
+
+        if (ch == '0') {
+            mask |= (0b10000000 >> i);
+        }
+        else if (ch == '1') {
+            mask |= (0b10000000 >> i);
+            target |= (0b10000000 >> i);
+        }
+        else {
+            SIGMATCH_CT_RT_ASSERT(
+                is_char_wildcard(ch), "Unknown character in Ghidra like signature");
+        }
+    }
+
+    return sig_byte{std::byte{target}, std::byte{mask}};
+}
+#endif
+
+[[nodiscard]] constexpr std::optional<sig_byte> parse_sig_byte(std::string_view byte_str)
+{
+#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+    if (byte_str.front() == '[' && byte_str.back() == ']') {
+        return parse_sig_ghidra(byte_str);
+    }
+#endif
+    return parse_sig_normal(byte_str);
+}
+
+template <details::consteval_str_buffer kSigStrBuf>
+[[nodiscard]] consteval decltype(auto) parse_sig_str_compile_time()
+{
+    constexpr size_t non_space_char_count = count_non_space_char(kSigStrBuf.to_string_view());
+    static_assert(non_space_char_count % 2 == 0, "The signature format is wrong.");
+
+    constexpr size_t bytes_count = string_split(kSigStrBuf.to_string_view(), " ").size();
+    auto bytes_vec = string_split(kSigStrBuf.to_string_view(), " ");
+
+    auto result = details::friendly_construct_array<sig_byte, bytes_count>();
+
+    for (size_t i = 0; i < bytes_count; ++i) {
+        result[i] = parse_sig_byte(bytes_vec[i]).value();
+    }
+
+    return result;
+}
+
+[[nodiscard]] constexpr std::optional<std::vector<sig_byte>>
+parse_sig_str_runtime(std::string_view sig) noexcept
+{
+    size_t non_space_char_count = count_non_space_char(sig);
+    if (non_space_char_count % 2 != 0) {
+        // "The signature format is wrong."
+        return std::nullopt;
+    }
+
+    auto bytes_vec = string_split(sig, " ");
+
+    std::vector<sig_byte> result;
+    result.reserve(bytes_vec.size());
+
+    for (size_t i = 0; i < bytes_vec.size(); ++i) {
+        auto b = parse_sig_byte(bytes_vec[i]);
+        if (!b.has_value()) {
+            return std::nullopt;
+        }
+        result.emplace_back(b.value());
+    }
+
+    return result;
+}
+
+} // namespace impl
+
+///
+/// @endcond
+///
+
 //////////////////////////////////////////////////
 ///
 /// @brief A signature class
@@ -1262,6 +1491,7 @@ public:
 
     // clang-format off
     struct ____literal_place_t{};
+    struct ____runtime_place_t{};
     // clang-format on
 
     template <size_t kCount>
@@ -1269,6 +1499,11 @@ public:
     {
         _bytes.reserve(bytes.size());
         std::copy(bytes.begin(), bytes.end(), std::back_inserter(_bytes));
+    }
+
+    constexpr signature(____runtime_place_t, std::vector<sig_byte> &&bytes)
+    {
+        _bytes = std::move(bytes);
     }
 
     ///
@@ -1323,6 +1558,28 @@ public:
     /// @param[in] rhs A right hand side value.
     ///
     [[nodiscard]] constexpr bool operator==(const signature &rhs) const noexcept = default;
+
+#if defined SIGMATCH_ENABLE_SIGNATURE_RUNTIME_PARSING
+
+    ///
+    /// @brief Parse signature at runtime
+    ///
+    /// The strings of the signatures parsed by this function will be retained in the compiled
+    /// binary, and they will take extra time to parse at runtime compared to compile-time parsing.
+    ///
+    /// @sa SIGMATCH_ENABLE_SIGNATURE_RUNTIME_PARSING sigmatch_literals::operator ""_sig()
+    ///
+    // TODO: better error reporting
+    [[nodiscard]] static constexpr std::optional<signature> parse(std::string_view sig) noexcept
+    {
+        auto bytes = impl::parse_sig_str_runtime(sig);
+        if (!bytes.has_value()) {
+            return std::nullopt;
+        }
+        return signature{____runtime_place_t{}, std::move(bytes.value())};
+    }
+
+#endif
 
     ///
     /// @brief Get the bytes vector
@@ -1448,173 +1705,6 @@ private:
         }
     }
 };
-
-namespace impl {
-
-[[nodiscard]] consteval std::byte parse_byte_hex_str(const std::string &str)
-{
-    unsigned char result = 0;
-
-    for (const char ch : str) {
-        // check byte value overflow
-        SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-            result < 0x10, "Please report this bug on the GitHub Issue Tracker.");
-
-        unsigned char ch_value;
-
-        if (ch >= '0' && ch <= '9') {
-            ch_value = ch - '0';
-        }
-        else if (ch >= 'A' && ch <= 'F') {
-            ch_value = ch - 'A' + 10;
-        }
-        else if (ch >= 'a' && ch <= 'f') {
-            ch_value = ch - 'a' + 10;
-        }
-        else {
-            SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-                false, "The signature format is wrong. Contains unexpected characters.");
-        }
-
-        SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-            ch_value < 0x10, "Please report this bug on the GitHub Issue Tracker.");
-
-        result *= 0x10;
-        result += ch_value;
-    }
-
-    return std::byte{result};
-}
-
-[[nodiscard]] consteval std::vector<std::string>
-string_split(std::string source, const std::string &delimiter, bool exclude_empty = true)
-{
-    std::vector<std::string> result;
-
-    size_t begin_pos = 0, end_pos;
-    do {
-        end_pos = source.find(delimiter, begin_pos);
-        std::string token = source.substr(begin_pos, end_pos - begin_pos);
-        if (!exclude_empty || exclude_empty && !token.empty()) {
-            result.emplace_back(std::move(token));
-        }
-        begin_pos = end_pos + delimiter.size();
-    } while (end_pos != std::string::npos);
-
-    return result;
-}
-
-[[nodiscard]] consteval bool is_char_wildcard(char ch) noexcept
-{
-    return ch == '?' || ch == '*'
-#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
-           || ch == '.'
-#endif
-        ;
-}
-
-template <details::consteval_str_buffer kSigStrBuf>
-[[nodiscard]] consteval size_t count_non_space_char() noexcept
-{
-    size_t result = 0;
-    for (size_t i = 0; i < kSigStrBuf.count; ++i) {
-        if (kSigStrBuf.data[i] != ' ') {
-            ++result;
-        }
-    }
-    return result;
-}
-
-[[nodiscard]] consteval sig_byte parse_sig_normal(const std::string &byte_str)
-{
-    SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-        byte_str.size() == 2,
-        "Normal signature byte should be represented by 2 hexadecimal digits.");
-
-    const bool is_left_wildcard = is_char_wildcard(byte_str.front()),
-               is_right_wildcard = is_char_wildcard(byte_str.back());
-
-    if (!is_left_wildcard && !is_right_wildcard) {
-        // full match
-        return parse_byte_hex_str(byte_str);
-    }
-    else if (is_left_wildcard && is_right_wildcard) {
-        // full wildcard
-        return _;
-    }
-    else if (is_left_wildcard && !is_right_wildcard) {
-        // semi-wildcard (left)
-        return {_, parse_byte_hex_str(std::string{byte_str.back()})};
-    }
-    else if (!is_left_wildcard && is_right_wildcard) {
-        // semi-wildcard (right)
-        return {parse_byte_hex_str(std::string{byte_str.front()}), _};
-    }
-    else {
-        SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-            false, "Please report this bug on the GitHub Issue Tracker.");
-    }
-}
-
-#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
-// refer to: https://github.com/NationalSecurityAgency/ghidra/issues/5490#issuecomment-1622277250
-[[nodiscard]] consteval sig_byte parse_sig_ghidra(const std::string &byte_str)
-{
-    SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-        byte_str.size() == 10 && byte_str.front() == '[' && byte_str.back() == ']',
-        "Ghidra signature byte should be represented by 8 binary digits.");
-
-    unsigned char target = 0, mask = 0;
-
-    for (size_t i = 0; i < 8; i++) {
-        char ch = byte_str.at(i + 1);
-
-        if (ch == '0') {
-            mask |= (0b10000000 >> i);
-        }
-        else if (ch == '1') {
-            mask |= (0b10000000 >> i);
-            target |= (0b10000000 >> i);
-        }
-        else {
-            SIGMATCH_CONSTEVAL_STATIC_ASSERT(
-                is_char_wildcard(ch), "Unknown character in Ghidra like signature");
-        }
-    }
-
-    return sig_byte{std::byte{target}, std::byte{mask}};
-}
-#endif
-
-[[nodiscard]] consteval sig_byte parse_sig_byte(const std::string &byte_str)
-{
-#if defined SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
-    if (byte_str.front() == '[' && byte_str.back() == ']') {
-        return parse_sig_ghidra(byte_str);
-    }
-#endif
-    return parse_sig_normal(byte_str);
-}
-
-template <details::consteval_str_buffer kSigStrBuf>
-[[nodiscard]] consteval decltype(auto) parse_sig_str()
-{
-    constexpr size_t non_space_char_count = count_non_space_char<kSigStrBuf>();
-    static_assert(non_space_char_count % 2 == 0, "The signature format is wrong.");
-
-    constexpr size_t bytes_count = string_split(kSigStrBuf.data, " ").size();
-    auto bytes_vec = string_split(kSigStrBuf.data, " ");
-
-    auto result = details::friendly_construct_array<sig_byte, bytes_count>();
-
-    for (size_t i = 0; i < bytes_count; ++i) {
-        result[i] = parse_sig_byte(bytes_vec[i]);
-    }
-
-    return result;
-}
-
-} // namespace impl
 
 ///
 /// @endcond
@@ -2791,7 +2881,9 @@ private:
 namespace sigmatch_literals {
 
 ///
-/// @brief Literal signature string suffix
+/// @brief Literal signature string suffix, parsing at compile-time
+///
+/// For runtime parsing, see sigmatch::signature::parse(std::string_view sig).
 ///
 /// @return sigmatch::signature A signature.
 ///
@@ -2822,12 +2914,14 @@ namespace sigmatch_literals {
 /// @endcode
 ///
 /// @sa SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
+/// sigmatch::signature::parse(std::string_view sig)
 ///
 template <sigmatch::details::consteval_str_buffer kSigStrBuf>
 [[nodiscard]] constexpr decltype(auto) operator""_sig()
 {
     return sigmatch::signature{
-        sigmatch::signature::____literal_place_t{}, sigmatch::impl::parse_sig_str<kSigStrBuf>()};
+        sigmatch::signature::____literal_place_t{},
+        sigmatch::impl::parse_sig_str_compile_time<kSigStrBuf>()};
 }
 
 } // namespace sigmatch_literals

@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+#define SIGMATCH_ENABLE_SIGNATURE_RUNTIME_PARSING
 #define SIGMATCH_EXPERIMENTAL_ENABLE_GHIDRA_SIGNATURE_FORMAT
 
 #include "includes.hpp"
@@ -118,8 +119,20 @@ TEST_CASE("Literal signature correctness - Ghidra like", "[signature]")
 {
     signature sig_from_vector{{0x7D, {0x5, 0xC7}, {_, 0xB}, {0x9, _}, {_, 0xD}, _, _, 0x24}};
     signature sig_from_literal{"    7d [00...101] ?B  9?  *d  ?? ** 24  "_sig};
+    auto sig_from_runtime = signature::parse("    7d [00...101] ?B  9?  *d  ?? ** 24  ");
 
     REQUIRE(sig_from_vector.size() == 8);
     REQUIRE(sig_from_literal.size() == 8);
+    REQUIRE(sig_from_runtime.has_value());
+    REQUIRE(sig_from_runtime->size() == 8);
     REQUIRE(sig_from_vector == sig_from_literal);
+    REQUIRE(sig_from_vector == sig_from_runtime);
+
+    // non-binary
+    //                                      v
+    REQUIRE(!signature::parse("    7d [00...201] ?B  9?  *d  ?? ** 24  ").has_value());
+
+    // 7 bits byte
+    //                                vvvvvvvvv
+    REQUIRE(!signature::parse("    7d [00...10] ?B  9?  *d  ?? ** 24  ").has_value());
 }
