@@ -118,12 +118,14 @@
 //
 
 #if defined SIGMATCH_PLATFORM_WINDOWS
-    #define WIN32_LEAN_AND_MEAN
-    #define NOMINMAX
+    #if !defined(WIN32_LEAN_AND_MEAN)
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #if !defined(NOMINMAX)
+        #define NOMINMAX
+    #endif
     #include <windows.h>
     #include <tlhelp32.h>
-    #undef WIN32_LEAN_AND_MEAN
-    #undef NOMINMAX
 #endif
 
 ///
