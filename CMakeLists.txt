@@ -41,7 +41,7 @@ if (SIGMATCH_DEV_MODE)
     endif()
 endif()
 
-project(sigmatch LANGUAGES CXX VERSION 0.1.0)
+project(sigmatch LANGUAGES CXX VERSION 0.2.0)
 
 add_library(sigmatch INTERFACE)
 add_library(sigmatch::sigmatch ALIAS sigmatch)
