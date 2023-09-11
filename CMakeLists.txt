@@ -85,3 +85,25 @@ endif()
 if (SIGMATCH_BUILD_BENCHMARKS)
     # TODO
 endif()
+
+# Install
+
+set(SIGMATCH_INSTALL_INCLUDE_DIR "${CMAKE_INSTALL_PREFIX}/include")
+set(SIGMATCH_INSTALL_CMAKE_DIR "${CMAKE_INSTALL_PREFIX}/lib/cmake/sigmatch")
+
+include(CMakePackageConfigHelpers)
+
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/sigmatch-config-version.cmake
+    VERSION ${sigmatch_VERSION}
+    COMPATIBILITY ExactVersion
+)
+
+install(DIRECTORY include/ DESTINATION ${SIGMATCH_INSTALL_INCLUDE_DIR})
+
+install(TARGETS sigmatch EXPORT sigmatch-targets)
+install(EXPORT sigmatch-targets NAMESPACE sigmatch:: DESTINATION "${SIGMATCH_INSTALL_CMAKE_DIR}")
+install(
+    FILES cmake/sigmatch-config.cmake ${CMAKE_CURRENT_BINARY_DIR}/sigmatch-config-version.cmake
+    DESTINATION "${SIGMATCH_INSTALL_CMAKE_DIR}"
+)
