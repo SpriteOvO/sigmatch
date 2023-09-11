@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+#define SIGMATCH_ENABLE_SIGNATURE_RUNTIME_PARSING
+
 #include "includes.hpp"
 
 using namespace sigmatch;
@@ -88,8 +90,16 @@ TEST_CASE("Literal signature correctness", "[signature]")
 {
     signature sig_from_vector{{0x7D, 0xDC, {_, 0xB}, {0x9, _}, {_, 0xD}, _, _, 0x24}};
     signature sig_from_literal{"    7d dC ?B  9?  *d  ?? ** 24  "_sig};
+    auto sig_from_runtime = signature::parse("    7d dC ?B  9?  *d  ?? ** 24  ");
 
     REQUIRE(sig_from_vector.size() == 8);
     REQUIRE(sig_from_literal.size() == 8);
+    REQUIRE(sig_from_runtime.has_value());
+    REQUIRE(sig_from_runtime->size() == 8);
     REQUIRE(sig_from_vector == sig_from_literal);
+    REQUIRE(sig_from_vector == sig_from_runtime);
+
+    // 'h' is not a valid hexadecimal digit
+    //                                       v
+    REQUIRE(!signature::parse("    7d dC ?B  h?  *d  ?? ** 24  ").has_value());
 }
