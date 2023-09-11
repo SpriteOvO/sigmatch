@@ -18,7 +18,7 @@ cmake_minimum_required(VERSION 3.12)
 
 if (DEFINED PROJECT_NAME)
     set(SIGMATCH_STANDALONE OFF)
-elseif()
+else()
     set(SIGMATCH_STANDALONE ON)
 endif()
 
