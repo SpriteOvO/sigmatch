@@ -2061,7 +2061,7 @@ public:
     ///
     /// @param[in] reader_ The reader.
     ///
-    explicit inline searcher(std::shared_ptr<reader> reader_) noexcept : _reader{std::move(reader_)}
+    explicit inline searcher(std::shared_ptr<class reader> reader_) noexcept : _reader{std::move(reader_)}
     {
     }
 
@@ -2077,10 +2077,10 @@ public:
     ///
     /// This is an deprecated function, please use `get_reader` instead.
     ///
-    /// @return const std::shared_ptr<reader> & The reader.
+    /// @return const std::shared_ptr<class reader> & The reader.
     ///
     [[deprecated("This function may be removed in the future, use get_reader instead")]]
-    [[nodiscard]] constexpr const std::shared_ptr<reader> &reader() const noexcept
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &reader() const noexcept
     {
         return _reader;
     }
@@ -2090,9 +2090,9 @@ public:
     ///
     /// @brief Get the reader
     ///
-    /// @return const std::shared_ptr<reader> & The reader.
+    /// @return const std::shared_ptr<class reader> & The reader.
     ///
-    [[nodiscard]] constexpr const std::shared_ptr<reader> &get_reader() const noexcept
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &get_reader() const noexcept
     {
         return _reader;
     }
@@ -2127,7 +2127,7 @@ public:
     }
 
 private:
-    std::shared_ptr<reader> _reader;
+    std::shared_ptr<class reader> _reader;
 };
 
 ///
@@ -2151,7 +2151,7 @@ public:
     /// @sa SIGMATCH_BLOCK_SIZE
     ///
     explicit inline blocking_searcher(
-        std::shared_ptr<reader> reader_, allow_default<size_t> block_size = default_value)
+        std::shared_ptr<class reader> reader_, allow_default<size_t> block_size = default_value)
         : searcher{std::move(reader_)}, _block_size{block_size.value_or(SIGMATCH_BLOCK_SIZE)}
     {
     }
@@ -2233,7 +2233,7 @@ public:
     /// @sa SIGMATCH_BLOCK_SIZE
     ///
     explicit inline multi_threaded_searcher(
-        std::shared_ptr<reader> reader_, allow_default<size_t> threads_max_count = default_value,
+        std::shared_ptr<class reader> reader_, allow_default<size_t> threads_max_count = default_value,
         allow_default<size_t> block_size = default_value)
         : blocking_searcher{std::move(reader_), std::move(block_size)},
           _threads_max_count{threads_max_count.value_or(std::thread::hardware_concurrency())}
@@ -2366,7 +2366,7 @@ public:
     /// @param[in] range   The search range.
     /// @param[in] reader_ The reader.
     ///
-    explicit inline search_context(const_byte_span range, std::shared_ptr<reader> reader_) noexcept
+    explicit inline search_context(const_byte_span range, std::shared_ptr<class reader> reader_) noexcept
         : search_context{std::vector<const_byte_span>{std::move(range)}, std::move(reader_)}
     {
     }
@@ -2378,7 +2378,7 @@ public:
     /// @param[in] reader_ The reader.
     ///
     explicit inline search_context(
-        std::vector<const_byte_span> ranges, std::shared_ptr<reader> reader_) noexcept
+        std::vector<const_byte_span> ranges, std::shared_ptr<class reader> reader_) noexcept
         : _ranges{std::move(ranges)}, _reader{std::move(reader_)}
     {
     }
@@ -2448,7 +2448,7 @@ public:
 
 private:
     std::vector<const_byte_span> _ranges;
-    std::shared_ptr<reader> _reader;
+    std::shared_ptr<class reader> _reader;
     std::optional<std::string> _error;
 
 public:
@@ -2467,7 +2467,7 @@ public:
         /// @cond
         ///
         explicit constexpr executor(
-            SearcherT searcher_, std::shared_ptr<reader> reader_,
+            SearcherT searcher_, std::shared_ptr<class reader> reader_,
             std::vector<const_byte_span> ranges_) noexcept
             : _searcher{std::move(searcher_)}, _reader{std::move(reader_)},
               _ranges{std::move(ranges_)}
@@ -2509,7 +2509,7 @@ public:
 
     private:
         SearcherT _searcher;
-        std::shared_ptr<reader> _reader;
+        std::shared_ptr<class reader> _reader;
         std::vector<const_byte_span> _ranges;
     };
 };
@@ -2533,7 +2533,7 @@ public:
     ///
     /// @sa reader
     ///
-    explicit inline target(std::shared_ptr<reader> reader_) noexcept : _reader{std::move(reader_)}
+    explicit inline target(std::shared_ptr<class reader> reader_) noexcept : _reader{std::move(reader_)}
     {
     }
 
@@ -2554,10 +2554,10 @@ public:
     ///
     /// This is an deprecated function, please use `get_reader` instead.
     ///
-    /// @return const std::shared_ptr<reader> & The reader.
+    /// @return const std::shared_ptr<class reader> & The reader.
     ///
     [[deprecated("This function may be removed in the future, use get_reader instead")]]
-    [[nodiscard]] constexpr const std::shared_ptr<reader> &reader() const noexcept
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &reader() const noexcept
     {
         return _reader;
     }
@@ -2567,9 +2567,9 @@ public:
     ///
     /// @brief Get the reader.
     ///
-    /// @return const std::shared_ptr<reader> & The reader.
+    /// @return const std::shared_ptr<class reader> & The reader.
     ///
-    [[nodiscard]] constexpr const std::shared_ptr<reader> &get_reader() const noexcept
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &get_reader() const noexcept
     {
         return _reader;
     }
