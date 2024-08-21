@@ -56,4 +56,4 @@ See [/examples](/examples) for more.
 
 ## 📜 License
 
-**sigmatch** is licensed under the [Apache-2.0 License](/LICENSE).
+**sigmatch** is licensed under either of [Apache-2.0 License](/LICENSE-APACHE) or [MIT License](/LICENSE-MIT) at your option.
