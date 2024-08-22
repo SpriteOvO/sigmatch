@@ -79,7 +79,7 @@
 #include <array>
 #include <vector>
 #include <string>
-#include <format>
+#include <cstring>
 #include <thread>
 #include <cwctype>
 #include <variant>
@@ -126,6 +126,8 @@
     #endif
     #include <windows.h>
     #include <tlhelp32.h>
+#elif defined SIGMATCH_PLATFORM_LINUX
+    #include <sys/uio.h>
 #endif
 
 ///
@@ -298,9 +300,9 @@ public:
         "It is recommended that the underlying type is unsigned.");
 
 private:
-    template <class T>
+    template <class T2>
     static constexpr inline bool is_operable_v =
-        std::is_same_v<T, enum_flags> || std::is_same_v<T, enum_type>;
+        std::is_same_v<T2, enum_flags> || std::is_same_v<T2, enum_type>;
 
 public:
     ///
@@ -510,7 +512,12 @@ SIGMATCH_ENABLE_ENUM_FLAGS_OPERATORS(mem_prot);
 ///
 /// @brief Process ID type.
 ///
-using process_id = uint32_t;
+using process_id =
+#if defined SIGMATCH_PLATFORM_WINDOWS
+    uint32_t;
+#else
+    pid_t;
+#endif
 
 ///
 /// @cond
@@ -522,15 +529,12 @@ using process_id = uint32_t;
 
 namespace details {
 
+#if defined SIGMATCH_PLATFORM_WINDOWS
 class process_handle
 {
 private:
-#if defined SIGMATCH_PLATFORM_WINDOWS
     using underlying_type = HANDLE;
     static constexpr underlying_type invalid_value = nullptr;
-#else
-    #error "Unimplemented."
-#endif
 
 public:
     process_handle() noexcept = default;
@@ -560,11 +564,7 @@ struct process_handle_closer
     constexpr void operator()(process_handle handle) noexcept
     {
         if (!handle) {
-#if defined SIGMATCH_PLATFORM_WINDOWS
             CloseHandle(handle.value());
-#else
-    #error "Unimplemented."
-#endif
         }
     }
 };
@@ -572,6 +572,13 @@ struct process_handle_closer
 } // namespace impl
 
 using unique_process_handle = std::unique_ptr<process_handle, impl::process_handle_closer>;
+
+[[nodiscard]] inline unique_process_handle open_process(process_id pid)
+{
+    return unique_process_handle{
+        OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid)};
+}
+#endif
 
 template <size_t kCount>
 struct consteval_str_buffer
@@ -593,16 +600,6 @@ struct consteval_str_buffer
     char_type data[kCount];
     constexpr static size_t count = kCount - sizeof(char_type);
 };
-
-[[nodiscard]] inline unique_process_handle open_process(process_id pid)
-{
-#if defined SIGMATCH_PLATFORM_WINDOWS
-    return unique_process_handle{
-        OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid)};
-#else
-    #error "Unimplemented."
-#endif
-}
 
 template <class VecT>
 constexpr void insert_vector(VecT &dest, const VecT &src)
@@ -729,6 +726,8 @@ requires(std::same_as<T, std::string> || std::same_as<T, std::u8string>)
 {
 #if defined SIGMATCH_PLATFORM_WINDOWS
     return process_id{GetCurrentProcessId()};
+#elif defined SIGMATCH_PLATFORM_LINUX
+    return process_id{getpid()};
 #else
     #error "Unimplemented."
 #endif
@@ -799,7 +798,7 @@ public:
 #if defined SIGMATCH_PLATFORM_WINDOWS
     using string_type = std::wstring;
 #else
-    #error "Unimplemented."
+    using string_type = std::string;
 #endif
 
     ///
@@ -807,51 +806,56 @@ public:
     ///
     /// @param[in] utf8 A utf-8 string.
     ///
-    constexpr platform_string(const std::u8string &utf8)
-    {
-#if defined SIGMATCH_PLATFORM_WINDOWS
-        _str = details::text::convert::utf8_to_wide_char(utf8);
-#else
-    #error "Unimplemented."
-#endif
-    }
-
-    ///
-    /// @copydoc platform_string(const std::u8string &)
-    ///
-    constexpr platform_string(const char8_t *utf8)
-    {
-#if defined SIGMATCH_PLATFORM_WINDOWS
-        _str = details::text::convert::utf8_to_wide_char(utf8);
-#else
-    #error "Unimplemented."
-#endif
-    }
-
-    ///
-    /// @copydoc platform_string(const std::u8string &)
-    ///
     constexpr platform_string(const std::string &utf8)
     {
 #if defined SIGMATCH_PLATFORM_WINDOWS
         _str = details::text::convert::utf8_to_wide_char(utf8);
 #else
-    #error "Unimplemented."
+        _str = utf8;
 #endif
     }
 
     ///
-    /// @copydoc platform_string(const std::u8string &)
+    /// @copydoc platform_string(const std::string &)
     ///
     constexpr platform_string(const char *utf8)
     {
 #if defined SIGMATCH_PLATFORM_WINDOWS
         _str = details::text::convert::utf8_to_wide_char(utf8);
 #else
-    #error "Unimplemented."
+        _str = utf8;
 #endif
     }
 
+#if defined __cpp_char8_t && !defined SIGMATCH_PLATFORM_LINUX
+    ///
+    /// @copydoc platform_string(const std::string &)
+    ///
+    constexpr platform_string(const std::u8string &utf8)
+    {
+    #if defined SIGMATCH_PLATFORM_WINDOWS
+        _str = details::text::convert::utf8_to_wide_char(utf8);
+    #else
+        #error "Unimplemented."
+    #endif
+    }
+#endif
+
+#if defined __cpp_char8_t && !defined SIGMATCH_PLATFORM_LINUX
+    ///
+    /// @copydoc platform_string(const std::string &)
+    ///
+    constexpr platform_string(const char8_t *utf8)
+    {
+    #if defined SIGMATCH_PLATFORM_WINDOWS
+        _str = details::text::convert::utf8_to_wide_char(utf8);
+    #else
+        #error "Unimplemented."
+    #endif
+    }
+#endif
+
+#if defined SIGMATCH_PLATFORM_WINDOWS
     ///
     /// @brief Constructor for wide char string
     ///
@@ -859,24 +863,19 @@ public:
     ///
     constexpr platform_string(const std::wstring &wstr)
     {
-#if defined SIGMATCH_PLATFORM_WINDOWS
         _str = wstr;
-#else
-    #error "Unimplemented."
-#endif
     }
+#endif
 
+#if defined SIGMATCH_PLATFORM_WINDOWS
     ///
     /// @copydoc platform_string(const std::wstring &)
     ///
     constexpr platform_string(const wchar_t *wstr)
     {
-#if defined SIGMATCH_PLATFORM_WINDOWS
         _str = wstr;
-#else
-    #error "Unimplemented."
-#endif
     }
+#endif
 
     ///
     /// @brief Copy constructor
@@ -948,7 +947,7 @@ public:
 #if defined SIGMATCH_PLATFORM_WINDOWS
         return details::text::convert::wide_char_to_utf8(_str);
 #else
-    #error "Unimplemented."
+        return _str;
 #endif
     }
 
@@ -1641,7 +1640,7 @@ public:
         _last_unmatched.clear();
     }
 
-    [[nodiscard]] constexpr void match(
+    constexpr void match(
         const std::span<std::byte> &data, const std::byte *base,
         std::vector<const std::byte *> &result)
     {
@@ -1783,16 +1782,24 @@ public:
     /// @param[in] pid The target process id.
     ///
     explicit inline external_process_memory_reader(process_id pid)
-        : _pid{std::move(pid)}, _handle{details::open_process(_pid)}
+        : _pid{std::move(pid)}
+#if defined SIGMATCH_PLATFORM_WINDOWS
+          ,
+          _handle{details::open_process(_pid)}
+#endif
     {
     }
 
     [[nodiscard]] inline std::optional<std::string> error() const override
     {
-        if (_handle) {
-            return std::nullopt;
+#if defined SIGMATCH_PLATFORM_WINDOWS
+        if (!_handle) {
+            std::ostringstream stream;
+            stream << "Failed to open process. (" << _pid << ")";
+            return stream.str();
         }
-        return std::format("Failed to open process. ({})", _pid);
+#endif
+        return std::nullopt;
     }
 
     [[nodiscard]] inline bool
@@ -1803,15 +1810,22 @@ public:
         }
         result.resize(size);
         size_t read_size = 0;
+#if defined SIGMATCH_PLATFORM_WINDOWS
         return ReadProcessMemory(
                    _handle.get().value(), address, result.data(), size,
                    reinterpret_cast<SIZE_T *>(&read_size)) &&
                size == read_size;
+#elif defined SIGMATCH_PLATFORM_LINUX
+        // TODO: process_vm_readv
+        return false;
+#endif
     }
 
 private:
     process_id _pid;
+#if defined SIGMATCH_PLATFORM_WINDOWS
     details::unique_process_handle _handle;
+#endif
 };
 
 ///
@@ -1835,7 +1849,9 @@ public:
         if (_stream.good()) {
             return std::nullopt;
         }
-        return std::format("Failed to open file. ({})", _file_path.string());
+        std::ostringstream stream;
+        stream << "Failed to open file. (" << _file_path.string() << ")";
+        return stream.str();
     }
 
     [[nodiscard]] inline bool
@@ -2045,7 +2061,7 @@ public:
     ///
     /// @param[in] reader_ The reader.
     ///
-    explicit inline searcher(std::shared_ptr<reader> reader_) noexcept : _reader{std::move(reader_)}
+    explicit inline searcher(std::shared_ptr<class reader> reader_) noexcept : _reader{std::move(reader_)}
     {
     }
 
@@ -2054,12 +2070,29 @@ public:
     ///
     virtual ~searcher() = default;
 
+#if defined SIGMATCH_PLATFORM_WINDOWS
+    // clang-format off
     ///
     /// @brief Get the reader
     ///
-    /// @return const std::shared_ptr<reader> & The reader.
+    /// This is an deprecated function, please use `get_reader` instead.
     ///
-    [[nodiscard]] constexpr const std::shared_ptr<reader> &reader() const noexcept
+    /// @return const std::shared_ptr<class reader> & The reader.
+    ///
+    [[deprecated("This function may be removed in the future, use get_reader instead")]]
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &reader() const noexcept
+    {
+        return _reader;
+    }
+    // clang-format on
+#endif
+
+    ///
+    /// @brief Get the reader
+    ///
+    /// @return const std::shared_ptr<class reader> & The reader.
+    ///
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &get_reader() const noexcept
     {
         return _reader;
     }
@@ -2144,11 +2177,13 @@ public:
             const auto ptr = range.data() + i;
             const auto size = (std::min)(_block_size, range.size() - i);
 
-            if (!reader()->read(ptr, size, read_buffer)) {
+            if (!get_reader()->read(ptr, size, read_buffer)) {
                 reading_failed = true;
 #if defined SIGMATCH_STORE_EACH_READING_FAILURE_WARNING_MESSAGE
-                result.warning_messages().emplace_back(std::format(
-                    "Failed to read {:#x} byte(s) at {}", size, static_cast<const void *>(ptr)));
+                std::ostringstream stream;
+                stream << "Failed to read 0x" << std::hex << size << " byte(s) at "
+                       << static_cast<const void *>(ptr);
+                result.warning_messages().emplace_back(stream.str());
 #endif
             }
             else {
@@ -2198,8 +2233,7 @@ public:
     /// @sa SIGMATCH_BLOCK_SIZE
     ///
     explicit inline multi_threaded_searcher(
-        std::shared_ptr<class reader> reader_,
-        allow_default<size_t> threads_max_count = default_value,
+        std::shared_ptr<class reader> reader_, allow_default<size_t> threads_max_count = default_value,
         allow_default<size_t> block_size = default_value)
         : blocking_searcher{std::move(reader_), std::move(block_size)},
           _threads_max_count{threads_max_count.value_or(std::thread::hardware_concurrency())}
@@ -2304,12 +2338,15 @@ private:
         return std::make_pair(threads_count, average_size);
     }
 
-    [[nodiscard]] inline void
+    inline void
     search_thread(const const_byte_span &range, const signature &sig, search_result &result) const
     {
         blocking_searcher::search(range, sig, result);
     }
 };
+
+namespace impl {
+} // namespace impl
 
 ///
 /// @brief The class represents the search context, which is usually returned by a member function
@@ -2318,68 +2355,6 @@ private:
 class search_context
 {
 public:
-    ///
-    /// @brief Search executor
-    ///
-    /// @tparam SearcherT The searcher type.
-    ///
-    /// @note Users should not construct this class directly.
-    ///
-    template <kind_of_searcher SearcherT>
-    class executor
-    {
-    public:
-        ///
-        /// @cond
-        ///
-
-        explicit constexpr executor(search_context ctx, SearcherT searcher_) noexcept
-            : _searcher{std::move(searcher_)}, _ctx{std::move(ctx)}
-        {
-        }
-
-        ///
-        /// @endcond
-        ///
-
-        ///
-        /// @brief Perform search with the selected searcher
-        ///
-        /// @param[in] sig The signature.
-        ///
-        /// @return search_result A search result.
-        ///
-        /// @sa searcher signature sigmatch_literals::operator ""_sig()
-        ///
-        [[nodiscard]] constexpr search_result search(const signature &sig) const
-        {
-            if (_ctx._error.has_value()) {
-                return search_result::make_error(_ctx._error.value());
-            }
-
-            auto reader_error = _ctx._reader->error();
-            if (reader_error.has_value()) {
-                return search_result::make_error(std::move(reader_error.value()));
-            }
-
-            if (!_ctx._reader) {
-                return search_result::make_error("No reader.");
-            }
-
-            if (_ctx._ranges.empty()) {
-                return search_result{};
-            }
-
-            search_result result;
-            _searcher.search(_ctx._ranges, sig, result);
-            return result;
-        }
-
-    private:
-        SearcherT _searcher;
-        search_context _ctx;
-    };
-
     ///
     /// @brief Default constructor
     ///
@@ -2391,7 +2366,7 @@ public:
     /// @param[in] range   The search range.
     /// @param[in] reader_ The reader.
     ///
-    explicit inline search_context(const_byte_span range, std::shared_ptr<reader> reader_) noexcept
+    explicit inline search_context(const_byte_span range, std::shared_ptr<class reader> reader_) noexcept
         : search_context{std::vector<const_byte_span>{std::move(range)}, std::move(reader_)}
     {
     }
@@ -2403,7 +2378,7 @@ public:
     /// @param[in] reader_ The reader.
     ///
     explicit inline search_context(
-        std::vector<const_byte_span> ranges, std::shared_ptr<reader> reader_) noexcept
+        std::vector<const_byte_span> ranges, std::shared_ptr<class reader> reader_) noexcept
         : _ranges{std::move(ranges)}, _reader{std::move(reader_)}
     {
     }
@@ -2450,7 +2425,8 @@ public:
     template <kind_of_searcher SearcherT = blocking_searcher, class... ArgsT>
     [[nodiscard]] constexpr auto select(ArgsT &&...args) const
     {
-        return executor<SearcherT>{*this, SearcherT{_reader, std::forward<ArgsT>(args)...}};
+        return executor<SearcherT>{
+            SearcherT{_reader, std::forward<ArgsT>(args)...}, _reader, _ranges};
     }
 
     ///
@@ -2464,13 +2440,78 @@ public:
     ///
     [[nodiscard]] constexpr search_result search(const signature &sig) const
     {
+        if (_error.has_value()) {
+            return search_result::make_error(_error.value());
+        }
         return select().search(sig);
     }
 
 private:
     std::vector<const_byte_span> _ranges;
-    std::shared_ptr<reader> _reader;
+    std::shared_ptr<class reader> _reader;
     std::optional<std::string> _error;
+
+public:
+    ///
+    /// @brief Search executor
+    ///
+    /// @tparam SearcherT The searcher type.
+    ///
+    /// @note Users should not construct this class directly.
+    ///
+    template <kind_of_searcher SearcherT>
+    class executor
+    {
+    public:
+        ///
+        /// @cond
+        ///
+        explicit constexpr executor(
+            SearcherT searcher_, std::shared_ptr<class reader> reader_,
+            std::vector<const_byte_span> ranges_) noexcept
+            : _searcher{std::move(searcher_)}, _reader{std::move(reader_)},
+              _ranges{std::move(ranges_)}
+        {
+        }
+
+        ///
+        /// @endcond
+        ///
+
+        ///
+        /// @brief Perform search with the selected searcher
+        ///
+        /// @param[in] sig The signature.
+        ///
+        /// @return search_result A search result.
+        ///
+        /// @sa searcher signature sigmatch_literals::operator ""_sig()
+        ///
+        [[nodiscard]] constexpr search_result search(const signature &sig) const
+        {
+            auto reader_error = _reader->error();
+            if (reader_error.has_value()) {
+                return search_result::make_error(std::move(reader_error.value()));
+            }
+
+            if (!_reader) {
+                return search_result::make_error("No reader.");
+            }
+
+            if (_ranges.empty()) {
+                return search_result{};
+            }
+
+            search_result result;
+            _searcher.search(_ranges, sig, result);
+            return result;
+        }
+
+    private:
+        SearcherT _searcher;
+        std::shared_ptr<class reader> _reader;
+        std::vector<const_byte_span> _ranges;
+    };
 };
 
 //////////////////////////////////////////////////
@@ -2492,7 +2533,7 @@ public:
     ///
     /// @sa reader
     ///
-    explicit inline target(std::shared_ptr<reader> reader_) noexcept : _reader{std::move(reader_)}
+    explicit inline target(std::shared_ptr<class reader> reader_) noexcept : _reader{std::move(reader_)}
     {
     }
 
@@ -2506,12 +2547,29 @@ public:
         return _reader->error();
     }
 
+#if defined SIGMATCH_PLATFORM_WINDOWS
+    // clang-format off
     ///
     /// @brief Get the reader.
     ///
-    /// @return const std::shared_ptr<reader> & The reader.
+    /// This is an deprecated function, please use `get_reader` instead.
     ///
-    [[nodiscard]] constexpr const std::shared_ptr<reader> &reader() const noexcept
+    /// @return const std::shared_ptr<class reader> & The reader.
+    ///
+    [[deprecated("This function may be removed in the future, use get_reader instead")]]
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &reader() const noexcept
+    {
+        return _reader;
+    }
+    // clang-format on
+#endif
+
+    ///
+    /// @brief Get the reader.
+    ///
+    /// @return const std::shared_ptr<class reader> & The reader.
+    ///
+    [[nodiscard]] constexpr const std::shared_ptr<class reader> &get_reader() const noexcept
     {
         return _reader;
     }
@@ -2539,7 +2597,7 @@ public:
     ///
     [[nodiscard]] inline search_context in_range(const_byte_span range) const noexcept
     {
-        return search_context{std::move(range), reader()};
+        return search_context{std::move(range), get_reader()};
     }
 
     ///
@@ -2551,7 +2609,7 @@ public:
     ///
     [[nodiscard]] inline search_context in_range(std::vector<const_byte_span> ranges) const noexcept
     {
-        return search_context{std::move(ranges), reader()};
+        return search_context{std::move(ranges), get_reader()};
     }
 };
 
@@ -2576,7 +2634,7 @@ public:
     [[nodiscard]] inline search_context in_range(size_t offset, size_t size) const noexcept
     {
         return search_context{
-            const_byte_span{reinterpret_cast<const void *>(offset), size}, reader()};
+            const_byte_span{reinterpret_cast<const void *>(offset), size}, get_reader()};
     }
 };
 
@@ -2676,8 +2734,9 @@ private:
 
         auto opt_info = find_module(name);
         if (!opt_info.has_value()) {
-            return union_err_mod_t{search_context::make_error(
-                std::format("Module not found or failed. ({})", name.to_string()))};
+            std::ostringstream stream;
+            stream << "Module not found or failed. (" << name.to_string() << ")";
+            return union_err_mod_t{search_context::make_error(stream.str())};
         }
 
         return union_err_mod_t{std::move(opt_info.value())};
@@ -2713,7 +2772,8 @@ private:
 
         return {};
 #else
-    #error "Unimplemented."
+        // TODO
+        return {};
 #endif
     }
 
@@ -2754,6 +2814,9 @@ private:
         }
 
         return result;
+#elif defined SIGMATCH_PLATFORM_LINUX
+        // TODO
+        return {};
 #else
     #error "Unimplemented."
 #endif
@@ -2854,9 +2917,10 @@ public:
         std::error_code ec;
         const auto file_size = std::filesystem::file_size(_file_path, ec);
         if (ec) {
-            return search_context::make_error(std::format(
-                "Get file size failed. (file: '{}', message: '{}')", _file_path.string(),
-                ec.message()));
+            std::ostringstream stream;
+            stream << "Get file size failed. (file: '" << _file_path.string() << "', message: '"
+                   << ec.message() << "')";
+            return search_context::make_error(stream.str());
         }
 
         return in_range(0, file_size);
